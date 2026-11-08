@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>KHKT - Hệ Thống Tra Nhớt Sên Tự Động ESP8266</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="cad-topbar">
+    <div class="cad-group">
+      <button class="cad-btn mode-btn active" id="btnMode2D">📐 BẢN VẼ CAD 2D</button>
+      <button class="cad-btn mode-btn" id="btnMode3D">🚲 MÔ HÌNH 3D REP 1:1</button>
+      <button class="cad-btn" id="btnFit">⛶ Căn Giữa</button>
+      <button class="cad-btn" id="btnSim">⚡ Trạng thái: CHẠY</button>
+    </div>
+    <div class="cad-group" id="layerBar2D">
+      <button class="cad-btn active" data-layer="power"><span class="dot" style="background:#ef4444"></span>Nguồn 12V/5V</button>
+      <button class="cad-btn active" data-layer="signal"><span class="dot" style="background:#22d3ee"></span>GPIO/I2C</button>
+      <button class="cad-btn active" data-layer="fluid"><span class="dot" style="background:#f59e0b"></span>Ống nhớt PU</button>
+      <button class="cad-btn active" data-layer="pinout"><span class="dot" style="background:#a855f7"></span>Bảng Pinout</button>
+      <button class="cad-btn export" id="btnExportDXF">⬇ File .DXF</button>
+      <button class="cad-btn export" id="btnDownloadSplit" style="display:none"></button>
+    </div>
+    <div class="cad-group" id="layerBar3D" style="display:none">
+      <button class="cad-btn active" id="btn3DLabels">🏷 Nhãn: Bật</button>
+      <button class="cad-btn" id="btn3DFocus">🔍 Cận cảnh Kit</button>
+      <button class="cad-btn active" id="btn3DSpin">🔄 Tự xoay 360°</button>
+    </div>
+  </div>
+  <canvas id="mainCanvas"></canvas>
+  <div class="cad-statusbar">
+    <div class="net-info">
+      <span class="net-badge" id="netName">CHẾ ĐỘ CAD 2D</span>
+      <span id="netDesc">Chạm vào đường dây hoặc khối linh kiện để kiểm tra chân tiếp xúc (Pinout).</span>
+    </div>
+    <div class="coords" id="coordDisplay">X: 0.0 | Y: 0.0 mm • Tỷ lệ 1:1</div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>
