@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>CAD 2D Schematic - Hệ Thống Tra Nhớt Tự Động ESP8266 (TRIOBLADE RC750)</title>
+  <style>
+    :root {
+      --bg-cad: #060a12;
+      --grid-minor: rgba(30, 58, 138, 0.22);
+      --grid-major: rgba(56, 189, 248, 0.22);
+      --panel-bg: rgba(11, 18, 32, 0.92);
+      --border-cad: rgba(56, 189, 248, 0.35);
+      --accent: #38bdf8;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg-cad);
+      font-family: "JetBrains Mono", "Consolas", "Courier New", monospace;
+      color: #e2e8f0;
+    }
+    #cadCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: grab;
+    }
+    #cadCanvas:active {
+      cursor: grabbing;
+    }
+    /* Thanh công cụ CAD trên cùng */
+    .cad-topbar {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      right: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      pointer-events: none;
+      z-index: 20;
+    }
+    .cad-group {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      background: var(--panel-bg);
+      border: 1px solid var(--border-cad);
+      padding: 4px 6px;
+      border-radius: 6px;
+      pointer-events: auto;
+      backdrop-filter: blur(6px);
+    }
+    .cad-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: #38bdf8;
+      padding: 0 6px;
+      letter-spacing: 0.5px;
+    }
+    .cad-btn {
+      background: rgba(30, 41, 59, 0.85);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      color: #cbd5e1;
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .cad-btn:hover {
+      border-color: #38bdf8;
+      color: #ffffff;
+    }
+    .cad-btn.active {
+      background: rgba(14, 165, 233, 0.25);
+      border-color: #38bdf8;
+      color: #38bdf8;
+    }
+    .cad-btn.export {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: #10b981;
+      color: #6ee7b7;
+    }
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    /* Thanh trạng thái & kiểm tra chân tiếp xúc phía dưới */
+    .cad-statusbar {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      right: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: var(--panel-bg);
+      border: 1px solid var(--border-cad);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 10.5px;
+      z-index: 20;
+      pointer-events: auto;
+    }
+    .net-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .net-badge {
+      background: #0ea5e9;
+      color: #060a12;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+    }
+    .coords {
+      color: #94a3b8;
+      font-size: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Thanh điều khiển Layer & Xuất file CAD -->
+  <div class="cad-topbar">
+    <div class="cad-group">
+      <span class="cad-title">AUTOCAD 2D • SƠ ĐỒ ĐẤU NỐI TOÀN HỆ THỐNG</span>
+      <button class="cad-btn" id="btnFit" title="Căn giữa toàn bản vẽ">⛶ Fit All</button>
+      <button class="cad-btn" id="btnSim" title="Mô phỏng đóng/ngắt chân chống">⚡ Test Mạch: CHẠY</button>
+    </div>
+
+    <div class="cad-group" id="layerBar">
+      <button class="cad-btn active" data-layer="power"><span class="dot" style="background:#ef4444"></span>Nguồn 12V/5V</button>
+      <button class="cad-btn active" data-layer="signal"><span class="dot" style="background:#22d3ee"></span>Tín hiệu GPIO/I2C</button>
+      <button class="cad-btn active" data-layer="fluid"><span class="dot" style="background:#f59e0b"></span>Ống nhớt PU</button>
+      <button class="cad-btn active" data-layer="pinout"><span class="dot" style="background:#a855f7"></span>Bảng Pinout & Dim</button>
+      <button class="cad-btn export" id="btnExportDXF">⬇ Xuất .DXF (AutoCAD)</button>
+      <button class="cad-btn export" id="btnExportSVG">⬇ Xuất .SVG</button>
+    </div>
+  </div>
+
+  <!-- Khung vẽ CAD 2D -->
+  <canvas id="cadCanvas"></canvas>
+
+  <!-- Thanh kiểm tra thông số dây & chân tiếp xúc (Net Inspector) -->
+  <div class="cad-statusbar">
+    <div class="net-info" id="inspectorBox">
+      <span class="net-badge" id="netName">CHỌN DÂY / LINH KIỆN</span>
+      <span id="netDesc">Chạm vào bất kỳ đường dây hoặc linh kiện nào trên bản vẽ để xem chi tiết chân tiếp xúc (Pinout), tiết diện dây và điện áp.</span>
+    </div>
+    <div class="coords" id="coordDisplay">X: 0.00 | Y: 0.00 mm • Tỷ lệ 1:1</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('cadCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Hệ tọa độ CAD ảo: Bản vẽ khổ A3 ngang (1600 x 1050 đơn vị mm kỹ thuật)
+    const CAD_W = 1650;
+    const CAD_H = 1080;
+
+    let camX = CAD_W / 2;
+    let camY = CAD_H / 2;
+    let zoom = 0.75;
+    let isPanning = false;
+    let startPanX = 0, startPanY = 0;
+    let mouseCAD = { x: 0, y: 0 };
+    let selectedNet = null;
+    let simRunning = true; // true = Chân chống gạt lên (Xe chạy), false = Hạ chân chống (Khóa)
+    let pulseTick = 0;
+
+    const layers = {
+      power: true,
+      signal: true,
+      fluid: true,
+      pinout: true
+    };
+
+    // Danh mục thông tin chi tiết các nhánh dây (Nets) & Chân tiếp xúc
+    const NET_DATABASE = {
+      "NET_12V_RAW": {
+        name: "12V_BAT (Nguồn Pin 3S)",
+        color: "#ef4444",
+        spec: "Điện áp: 11.1V - 12.6V DC | Dây: AWG20 (0.5mm²) Đỏ | Điểm đầu: Cực (+) Pin 3S 18650 -> Cầu chì 2A -> Công tắc nguồn tổng -> Chân IN+ (LM2596) & VIN+ (MOSFET D4184)"
+      },
+      "NET_GND": {
+        name: "GND_COMMON (Mass chung)",
+        color: "#64748b",
+        spec: "Điện áp: 0V (Mass chung toàn mạch) | Dây: AWG20/22 Đen | Kết nối: Pin 3S (-) <-> LM2596 (IN-/OUT-) <-> ESP8266 (GND) <-> MPU6050 (GND) <-> MOSFET (GND/VIN-) <-> Reed Switch (COM)"
+      },
+      "NET_5V_BUCK": {
+        name: "5V_VCC (Nguồn sau hạ áp)",
+        color: "#f97316",
+        spec: "Điện áp: 5.0V DC ổn áp | Dây: AWG22 Cam | Điểm đầu: Chân OUT+ (Module Buck LM2596) -> Điểm cuối: Chân VIN (Pin số 15 trên NodeMCU ESP8266)"
+      },
+      "NET_3V3": {
+        name: "3V3_LOGIC (Nguồn nuôi cảm biến)",
+        color: "#fb7185",
+        spec: "Điện áp: 3.3V DC (từ LDO trên ESP8266) | Dây: AWG24 Hồng | Điểm đầu: Chân 3V3 (ESP8266) -> Điểm cuối: Chân VCC (Cảm biến MPU6050) & VCC (Cảm biến mưa)"
+      },
+      "NET_I2C_SCL": {
+        name: "I2C_SCL (Xung nhịp I2C 400kHz)",
+        color: "#22d3ee",
+        spec: "Tín hiệu: I2C Clock (3.3V Logic) | Dây: AWG24 Xanh Dương | Điểm đầu: Chân D1 / GPIO5 (ESP8266) -> Điểm cuối: Chân SCL (Cảm biến gia tốc MPU6050)"
+      },
+      "NET_I2C_SDA": {
+        name: "I2C_SDA (Dữ liệu I2C 400kHz)",
+        color: "#38bdf8",
+        spec: "Tín hiệu: I2C Data (3.3V Logic, Địa chỉ 0x68) | Dây: AWG24 Xanh Lam | Điểm đầu: Chân D2 / GPIO4 (ESP8266) -> Điểm cuối: Chân SDA (Cảm biến gia tốc MPU6050)"
+      },
+      "NET_GPIO14_PUMP": {
+        name: "PWM_PUMP (Lệnh kích Bơm)",
+        color: "#eab308",
+        spec: "Tín hiệu: Digital Output / PWM (3.3V, 400ms/chu kỳ) | Dây: AWG24 Vàng | Điểm đầu: Chân D5 / GPIO14 (ESP8266) -> Điểm cuối: Chân PWM/SIG (Module MOSFET D4184)"
+      },
+      "NET_GPIO12_STAND": {
+        name: "KICKSTAND_SW (Tín hiệu chân chống)",
+        color: "#10b981",
+        spec: "Tín hiệu: INPUT_PULLUP (Mức LOW = Hạ chống ngắt bơm, HIGH = Gạt chống chạy) | Dây: AWG24 Xanh Lá | Điểm đầu: Chân D6 / GPIO12 (ESP8266) -> Tiếp điểm NO (Công tắc từ Reed Switch bên trái)"
+      },
+      "NET_ADC0_RAIN": {
+        name: "ADC0_SENSOR2 (Cảm biến phụ/Mưa)",
+        color: "#c084fc",
+        spec: "Tín hiệu: Analog 0 - 1.0V (10-bit ADC) | Dây: AWG24 Tím | Điểm đầu: Chân A0 / ADC0 (ESP8266) -> Điểm cuối: Chân AO (Module cảm biến nước mưa tùy chọn)"
+      },
+      "NET_PUMP_12V": {
+        name: "PUMP_DRIVE_12V (Nguồn cấp Bơm)",
+        color: "#f43f5e",
+        spec: "Điện áp: 12V DC đóng cắt qua MOSFET (Dòng 0.12A) + Đi-ốt chống ngược 1N4007 | Dây: AWG20 Đỏ/Đen | Điểm đầu: Domino VOUT+/VOUT- (MOSFET D4184) -> Cực M+/M- (Bơm nhu động 12V)"
+      },
+      "NET_OIL_LINE": {
+        name: "FLUID_PU_4MM (Đường ống nhớt)",
+        color: "#f59e0b",
+        spec: "Vật liệu: Ống Polyurethane (PU) chịu dầu Ø4x2.5mm + Đoạn ống Silicone 2x4mm trong buồng bơm | Lộ trình: Bình 300ml -> Van khóa tay BUC-4 -> Đầu Hút Bơm -> Đầu Đẩy Bơm -> Gắp phải COURAGE -> Vòi Inox 45°"
+      }
+    };
+
+    // Danh sách các đường dây CAD để vẽ và bắt sự kiện Click/Hover
+    const WIRES = [
+      // 1. MẠCH NGUỒN 12V & 5V (Layer: power)
+      { layer: 'power', net: 'NET_12V_RAW', pts: [[230, 210], [290, 210], [340, 210], [430, 210]] },
+      { layer: 'power', net: 'NET_12V_RAW', pts: [[390, 210], [390, 130], [920, 130], [920, 210], [960, 210]] },
+      { layer: 'power', net: 'NET_5V_BUCK', pts: [[570, 210], [640, 210]] },
+      { layer: 'power', net: 'NET_3V3', pts: [[640, 390], [560, 390], [560, 560], [480, 560]] },
+      { layer: 'power', net: 'NET_3V3', pts: [[560, 560], [560, 745], [480, 745]] },
+
+      // Mạch GND chung toàn hệ thống (Layer: power)
+      { layer: 'power', net: 'NET_GND', pts: [[230, 260], [430, 260]] },
+      { layer: 'power', net: 'NET_GND', pts: [[570, 260], [605, 260], [605, 350], [640, 350]] },
+      { layer: 'power', net: 'NET_GND', pts: [[605, 350], [605, 585], [480, 585]] },
+      { layer: 'power', net: 'NET_GND', pts: [[605, 585], [605, 770], [480, 770]] },
+      { layer: 'power', net: 'NET_GND', pts: [[605, 770], [605, 920], [480, 920]] },
+      { layer: 'power', net: 'NET_GND', pts: [[605, 260], [605, 160], [890, 160], [890, 250], [960, 250]] },
+      { layer: 'power', net: 'NET_GND', pts: [[890, 250], [890, 340], [960, 340]] },
+
+      // Nguồn ra Bơm nhu động 12V (Layer: power)
+      { layer: 'power', net: 'NET_PUMP_12V', pts: [[1120, 210], [1230, 210], [1230, 410], [1160, 410]] },
+      { layer: 'power', net: 'NET_PUMP_12V', pts: [[1120, 250], [1200, 250], [1200, 450], [1160, 450]] },
+
+      // 2. MẠCH TÍN HIỆU I2C & GPIO (Layer: signal)
+      { layer: 'signal', net: 'NET_I2C_SCL', pts: [[840, 230], [875, 230], [875, 610], [480, 610]] },
+      { layer: 'signal', net: 'NET_I2C_SDA', pts: [[840, 265], [860, 265], [860, 635], [480, 635]] },
+      { layer: 'signal', net: 'NET_GPIO14_PUMP', pts: [[840, 310], [960, 310]] },
+      { layer: 'signal', net: 'NET_GPIO12_STAND', pts: [[840, 355], [905, 355], [905, 885], [480, 885]] },
+      { layer: 'signal', net: 'NET_ADC0_RAIN', pts: [[640, 295], [530, 295], [530, 795], [480, 795]] },
+
+      // 3. ĐƯỜNG ỐNG DẪN NHỚT THỦY LỰC PU 4MM (Layer: fluid)
+      { layer: 'fluid', net: 'NET_OIL_LINE', pts: [[1410, 250], [1410, 320]] },
+      { layer: 'fluid', net: 'NET_OIL_LINE', pts: [[1410, 390], [1410, 450], [1290, 450], [1290, 520], [1160, 520]] },
+      { layer: 'fluid', net: 'NET_OIL_LINE', pts: [[1160, 560], [1290, 560], [1290, 690], [1410, 690]] }
+    ];
+
+    // Danh sách các khối Linh kiện CAD (Blocks)
+    const BLOCKS = [
+      {
+        id: 'BAT_3S', x: 70, y: 170, w: 160, h: 120,
+        title: 'KHỐI 1: PIN 3S 18650', sub: '11.1V - 12.6V DC (2600mAh)',
+        net: 'NET_12V_RAW',
+        pins: [
+          { x: 230, y: 210, label: 'BAT+ (12V)', side: 'right', col: '#ef4444' },
+          { x: 230, y: 260, label: 'BAT- (GND)', side: 'right', col: '#94a3b8' }
+        ]
+      },
+      {
+        id: 'BUCK_LM2596', x: 430, y: 170, w: 140, h: 120,
+        title: 'KHỐI 2: HẠ ÁP LM2596', sub: 'Buck DC-DC 12V -> 5.0V (3A)',
+        net: 'NET_5V_BUCK',
+        pins: [
+          { x: 430, y: 210, label: 'IN+', side: 'left', col: '#ef4444' },
+          { x: 430, y: 260, label: 'IN-', side: 'left', col: '#94a3b8' },
+          { x: 570, y: 210, label: 'OUT+ (5V)', side: 'right', col: '#f97316' },
+          { x: 570, y: 260, label: 'OUT- (GND)', side: 'right', col: '#94a3b8' }
+        ]
+      },
+      {
+        id: 'MCU_ESP8266', x: 640, y: 170, w: 200, h: 260,
+        title: 'KHỐI 3: ESP8266 (ESP-12E)', sub: 'NodeMCU 1.0 • AP: 192.168.4.1',
+        net: 'NET_GPIO14_PUMP',
+        pins: [
+          { x: 640, y: 210, label: 'VIN (5V)', side: 'left', col: '#f97316' },
+          { x: 640, y: 295, label: 'A0 (ADC0)', side: 'left', col: '#c084fc' },
+          { x: 640, y: 350, label: 'GND', side: 'left', col: '#94a3b8' },
+          { x: 640, y: 390, label: '3V3 (Out)', side: 'left', col: '#fb7185' },
+          { x: 840, y: 230, label: 'D1 (GPIO5/SCL)', side: 'right', col: '#22d3ee' },
+          { x: 840, y: 265, label: 'D2 (GPIO4/SDA)', side: 'right', col: '#38bdf8' },
+          { x: 840, y: 310, label: 'D5 (GPIO14)', side: 'right', col: '#eab308' },
+          { x: 840, y: 355, label: 'D6 (GPIO12)', side: 'right', col: '#10b981' }
+        ]
+      },
+      {
+        id: 'MOSFET_D4184', x: 960, y: 170, w: 160, h: 200,
+        title: 'KHỐI 4: MOSFET D4184', sub: 'Cách ly & Kích tải 12V (15A)',
+        net: 'NET_PUMP_12V',
+        pins: [
+          { x: 960, y: 210, label: 'VIN+ (12V)', side: 'left', col: '#ef4444' },
+          { x: 960, y: 250, label: 'VIN- (GND)', side: 'left', col: '#94a3b8' },
+          { x: 960, y: 310, label: 'PWM (SIG)', side: 'left', col: '#eab308' },
+          { x: 960, y: 340, label: 'GND (Logic)', side: 'left', col: '#94a3b8' },
+          { x: 1120, y: 210, label: 'VOUT+ (M+)', side: 'right', col: '#f43f5e' },
+          { x: 1120, y: 250, label: 'VOUT- (M-)', side: 'right', col: '#94a3b8' }
+        ]
+      },
+      {
+        id: 'SENS_MPU6050', x: 270, y: 530, w: 210, h: 135,
+        title: 'KHỐI 5: CẢM BIẾN MPU6050', sub: 'Gia tốc 3 trục I2C (Địa chỉ 0x68)',
+        net: 'NET_I2C_SDA',
+        pins: [
+          { x: 480, y: 560, label: 'VCC (3.3V)', side: 'right', col: '#fb7185' },
+          { x: 480, y: 585, label: 'GND', side: 'right', col: '#94a3b8' },
+          { x: 480, y: 610, label: 'SCL (D1)', side: 'right', col: '#22d3ee' },
+          { x: 480, y: 635, label: 'SDA (D2)', side: 'right', col: '#38bdf8' }
+        ]
+      },
+      {
+        id: 'SENS_RAIN', x: 270, y: 715, w: 210, h: 105,
+        title: 'KHỐI 6: CẢM BIẾN PHỤ (MƯA)', sub: 'Slot cảm biến thứ 2 (Tùy chọn)',
+        net: 'NET_ADC0_RAIN',
+        pins: [
+          { x: 480, y: 745, label: 'VCC (3.3V)', side: 'right', col: '#fb7185' },
+          { x: 480, y: 770, label: 'GND', side: 'right', col: '#94a3b8' },
+          { x: 480, y: 795, label: 'AO (A0)', side: 'right', col: '#c084fc' }
+        ]
+      },
+      {
+        id: 'SENS_REED', x: 270, y: 855, w: 210, h: 95,
+        title: 'KHỐI 7: CÔNG TẮC TỪ CHÂN CHỐNG', sub: 'Reed Switch + Nam châm (Gắp trái)',
+        net: 'NET_GPIO12_STAND',
+        pins: [
+          { x: 480, y: 885, label: 'NO (Về D6)', side: 'right', col: '#10b981' },
+          { x: 480, y: 920, label: 'COM (GND)', side: 'right', col: '#94a3b8' }
+        ]
+      },
+      {
+        id: 'PUMP_G168', x: 960, y: 390, w: 200, h: 200,
+        title: 'KHỐI 8: BƠM NHU ĐỘNG 12V', sub: 'G168 Peristaltic 0.12A (Tự khóa kín)',
+        net: 'NET_OIL_LINE',
+        pins: [
+          { x: 1160, y: 410, label: 'M+ (12V Đỏ)', side: 'right', col: '#f43f5e' },
+          { x: 1160, y: 450, label: 'M- (GND Đen)', side: 'right', col: '#94a3b8' },
+          { x: 1160, y: 520, label: 'INLET Ø3.9mm', side: 'right', col: '#f59e0b' },
+          { x: 1160, y: 560, label: 'OUTLET Ø3.9mm', side: 'right', col: '#f59e0b' }
+        ]
+      }
+    ];
+
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener('resize', () => { resize(); fitAll(); });
+    resize();
+
+    function fitAll() {
+      const pad = 40;
+      const w = window.innerWidth - pad * 2;
+      const h = window.innerHeight - 110;
+      zoom = Math.min(w / CAD_W, h / CAD_H);
+      zoom = Math.max(0.22, Math.min(1.5, zoom));
+      camX = CAD_W / 2;
+      camY = CAD_H / 2;
+    }
+    fitAll();
+
+    function worldToScreen(wx, wy) {
+      return {
+        x: window.innerWidth / 2 + (wx - camX) * zoom,
+        y: window.innerHeight / 2 + (wy - camY) * zoom
+      };
+    }
+
+    function screenToWorld(sx, sy) {
+      return {
+        x: camX + (sx - window.innerWidth / 2) / zoom,
+        y: camY + (sy - window.innerHeight / 2) / zoom
+      };
+    }
+
+    // Vẽ lưới tọa độ CAD
+    function drawGrid() {
+      const stepMinor = 25;
+      const stepMajor = 100;
+      const tl = screenToWorld(0, 0);
+      const br = screenToWorld(window.innerWidth, window.innerHeight);
+
+      const startX = Math.floor(tl.x / stepMinor) * stepMinor;
+      const endX = Math.ceil(br.x / stepMinor) * stepMinor;
+      const startY = Math.floor(tl.y / stepMinor) * stepMinor;
+      const endY = Math.ceil(br.y / stepMinor) * stepMinor;
+
+      ctx.lineWidth = 1;
+      for (let x = startX; x <= endX; x += stepMinor) {
+        const sx = worldToScreen(x, 0).x;
+        ctx.strokeStyle = (x % stepMajor === 0) ? 'rgba(56, 189, 248, 0.14)' : 'rgba(30, 58, 138, 0.16)';
+        ctx.beginPath();
+        ctx.moveTo(sx, 0);
+        ctx.lineTo(sx, window.innerHeight);
+        ctx.stroke();
+      }
+      for (let y = startY; y <= endY; y += stepMinor) {
+        const sy = worldToScreen(0, y).y;
+        ctx.strokeStyle = (y % stepMajor === 0) ? 'rgba(56, 189, 248, 0.14)' : 'rgba(30, 58, 138, 0.16)';
+        ctx.beginPath();
+        ctx.moveTo(0, sy);
+        ctx.lineTo(window.innerWidth, sy);
+        ctx.stroke();
+      }
+    }
+
+    // Vẽ Khung Bản Vẽ Kỹ Thuật Tiêu Chuẩn (ISO / TCVN Title Block)
+    function drawDrawingBorder() {
+      ctx.save();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(20, 20, CAD_W - 40, CAD_H - 40);
+
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(32, 32, CAD_W - 64, CAD_H - 64);
+
+      // Chia vùng tọa độ bản vẽ (A-F, 1-8)
+      ctx.fillStyle = '#64748b';
+      ctx.font = 'bold 11px monospace';
+      for (let i = 0; i < 8; i++) {
+        const x = 32 + (i + 0.5) * ((CAD_W - 64) / 8);
+        ctx.fillText(String(i + 1), x, 29);
+        ctx.fillText(String(i + 1), x, CAD_H - 22);
+      }
+
+      // Khung tên kỹ thuật góc dưới bên phải (Title Block)
+      const tbX = 960, tbY = 895, tbW = 658, tbH = 153;
+      ctx.fillStyle = 'rgba(11, 18, 32, 0.94)';
+      ctx.fillRect(tbX, tbY, tbW, tbH);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.6;
+      ctx.strokeRect(tbX, tbY, tbW, tbH);
+
+      // Đường kẻ chia ô khung tên
+      ctx.beginPath();
+      ctx.moveTo(tbX, tbY + 42); ctx.lineTo(tbX + tbW, tbY + 42);
+      ctx.moveTo(tbX, tbY + 85); ctx.lineTo(tbX + tbW, tbY + 85);
+      ctx.moveTo(tbX, tbY + 120); ctx.lineTo(tbX + tbW, tbY + 120);
+      ctx.moveTo(tbX + 430, tbY + 42); ctx.lineTo(tbX + 430, tbY + tbH);
+      ctx.stroke();
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText('BẢN VẼ CAD 2D: HỆ THỐNG TRA NHỚT SÊN TỰ ĐỘNG ESP8266 (REP 1:1)', tbX + 14, tbY + 26);
+
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = '11.5px monospace';
+      ctx.fillText('MẪU XE THỬ NGHIỆM: XE ĐẠP ĐỊA HÌNH TRIOBLADE RC750', tbX + 14, tbY + 67);
+      ctx.fillText('VI ĐIỀU KHIỂN: NodeMCU ESP8266 (ESP-12E) + Cảm biến MPU6050', tbX + 14, tbY + 107);
+      ctx.fillText('CƠ CẤU CHẤP HÀNH: Bơm nhu động 12V 0.12A + MOSFET D4184 + Reed Switch', tbX + 14, tbY + 141);
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText('MÃ BẢN VẼ: CAD-OILER-2D-V1', tbX + 442, tbY + 67);
+      ctx.fillText('TỶ LỆ: 1:1  | ĐƠN VỊ: mm', tbX + 442, tbY + 107);
+      ctx.fillStyle = '#10b981';
+      ctx.fillText('NGÂN SÁCH: < 400.000 VNĐ', tbX + 442, tbY + 141);
+      ctx.restore();
+    }
+
+    // Vẽ cụm thủy lực (Bình nhớt 300ml, Van khóa tay, Ống PU, Vòi nhỏ 45° & Đĩa xích)
+    function drawFluidSystem() {
+      if (!layers.fluid) return;
+      ctx.save();
+
+      // 1. Bình chứa nhớt 300ml (X=1340, Y=110)
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(1340, 110, 140, 140, 12);
+      ctx.fill();
+      ctx.stroke();
+
+      // Mức nhớt vàng hổ phách bên trong bình
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.35)';
+      ctx.fillRect(1346, 145, 128, 98);
+
+      // Nắp thở CNC
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(1385, 92, 50, 18);
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('BÌNH NHỚT 300ML', 1354, 134);
+      ctx.fillStyle = '#fcd34d';
+      ctx.font = '10px monospace';
+      ctx.fillText('(Gọng nước ống chéo)', 1348, 185);
+      ctx.fillText('Lỗ thông hơi Ø1mm', 1355, 205);
+
+      // 2. Van khóa tổng bằng tay (Master Valve BUC-4)
+      ctx.fillStyle = '#1e293b';
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(1360, 320, 100, 70);
+      ctx.fillRect(1360, 320, 100, 70);
+      ctx.fillStyle = '#f59e0b';
+      ctx.font = 'bold 10.5px monospace';
+      ctx.fillText('VAN KHÓA TỔNG', 1368, 348);
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '9.5px monospace';
+      ctx.fillText('BUC-4 Ø4mm (Tay)', 1364, 368);
+
+      // 3. Vòi nhỏ giọt Inox 45° + Xích líp sau bên phải (X=1340, Y=650)
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.strokeStyle = '#f472b6';
+      ctx.lineWidth = 1.8;
+      ctx.strokeRect(1335, 640, 245, 195);
+      ctx.fillRect(1335, 640, 245, 195);
+
+      ctx.fillStyle = '#f472b6';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('CỤM NHÔNG XÍCH (BÊN PHẢI)', 1348, 662);
+
+      // Vẽ đĩa líp & củ đề bánh răng đỏ trong CAD
+      const sx = 1495, sy = 745;
+      ctx.strokeStyle = '#d97706';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 38, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 22, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Bánh răng củ đề đỏ
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath();
+      ctx.arc(sx - 25, sy + 52, 12, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Vòi kim Inox vát 45 độ
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(1410, 690);
+      ctx.lineTo(1455, 725);
+      ctx.stroke();
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = '10px monospace';
+      ctx.fillText('Vòi Inox 45° (Ø1.2mm)', 1345, 720);
+
+      // Giọt nhớt đang nhỏ
+      if (simRunning) {
+        const dy = (pulseTick % 30) * 0.9;
+        ctx.fillStyle = '#facc15';
+        ctx.beginPath();
+        ctx.arc(1458, 730 + dy, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // Vẽ cầu chì, công tắc nguồn và đi-ốt chống ngược 1N4007 trên mạch
+    function drawDiscreteSymbols() {
+      if (!layers.power) return;
+      ctx.save();
+
+      // Cầu chì FUSE 2A (X=275, Y=210)
+      ctx.fillStyle = '#0f172a';
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.6;
+      ctx.fillRect(262, 198, 46, 24);
+      ctx.strokeRect(262, 198, 46, 24);
+      ctx.fillStyle = '#fca5a5';
+      ctx.font = 'bold 9.5px monospace';
+      ctx.fillText('FUSE 2A', 265, 213);
+
+      // Công tắc nguồn tổng SW1 (X=345, Y=210)
+      ctx.fillStyle = '#0f172a';
+      ctx.strokeStyle = '#38bdf8';
+      ctx.fillRect(328, 198, 48, 24);
+      ctx.strokeRect(328, 198, 48, 24);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillText('SW_ON', 336, 213);
+
+      // Đi-ốt dập xung ngược 1N4007 mắc song song cực Bơm 12V (X=1215, Y=330)
+      ctx.fillStyle = '#0f172a';
+      ctx.strokeStyle = '#f43f5e';
+      ctx.fillRect(1182, 310, 78, 36);
+      ctx.strokeRect(1182, 310, 78, 36);
+      ctx.fillStyle = '#fda4af';
+      ctx.font = 'bold 9.5px monospace';
+      ctx.fillText('DIODE 1N4007', 1187, 326);
+      ctx.font = '8.5px monospace';
+      ctx.fillText('(Chống xung ngược)', 1185, 339);
+
+      ctx.restore();
+    }
+
+    // Vẽ bảng tổng hợp Pinout & Kích thước kỹ thuật (Layer: pinout)
+    function drawPinoutTableAndDims() {
+      if (!layers.pinout) return;
+      ctx.save();
+
+      // Bảng đấu nối chân tiếp xúc chuẩn (X=70, Y=340)
+      const tx = 70, ty = 335, tw = 445, th = 165;
+      ctx.fillStyle = 'rgba(11, 18, 32, 0.94)';
+      ctx.strokeStyle = '#a855f7';
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(tx, ty, tw, th);
+      ctx.strokeRect(tx, ty, tw, th);
+
+      ctx.fillStyle = '#c084fc';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('BẢNG ĐẤU NỐI CHÂN TIẾP XÚC VI ĐIỀU KHIỂN ESP8266 (PINOUT)', tx + 12, ty + 20);
+
+      ctx.strokeStyle = 'rgba(168, 85, 247, 0.35)';
+      ctx.beginPath();
+      ctx.moveTo(tx, ty + 28); ctx.lineTo(tx + tw, ty + 28);
+      ctx.stroke();
+
+      const rows = [
+        ['CHÂN BOARD', 'GPIO', 'ĐIỂM ĐẤU NỐI TIẾP XÚC', 'ĐIỆN ÁP / LOGIC'],
+        ['VIN / GND', 'PWR', 'OUT+ / OUT- Mạch Buck LM2596', '5.0V DC ổn áp'],
+        ['D1 / D2', 'GPIO5/4', 'Chân SCL / SDA Cảm biến MPU6050', '3.3V I2C (400kHz)'],
+        ['D5', 'GPIO14', 'Chân PWM Module MOSFET D4184', 'HIGH (400ms) = Bơm'],
+        ['D6', 'GPIO12', 'Chân NO Công tắc từ Chân chống trái', 'LOW (GND) = Ngắt'],
+        ['A0', 'ADC0', 'Chân AO Cảm biến mưa (Tùy chọn)', 'Analog 0 - 1.0V']
+      ];
+
+      rows.forEach((r, idx) => {
+        const ry = ty + 46 + idx * 21;
+        ctx.fillStyle = idx === 0 ? '#38bdf8' : '#e2e8f0';
+        ctx.font = idx === 0 ? 'bold 9.5px monospace' : '9.5px monospace';
+        ctx.fillText(r[0], tx + 10, ry);
+        ctx.fillText(r[1], tx + 92, ry);
+        ctx.fillText(r[2], tx + 155, ry);
+        ctx.fillText(r[3], tx + 345, ry);
+      });
+
+      // Vẽ đường kích thước (Dimension Lines) kiểu AutoCAD
+      ctx.strokeStyle = '#a855f7';
+      ctx.fillStyle = '#c084fc';
+      ctx.lineWidth = 1;
+      ctx.font = '9.5px monospace';
+
+      // Kích thước chiều dài ống dầu PU
+      ctx.beginPath();
+      ctx.moveTo(1305, 450); ctx.lineTo(1305, 690);
+      ctx.moveTo(1298, 450); ctx.lineTo(1312, 450);
+      ctx.moveTo(1298, 690); ctx.lineTo(1312, 690);
+      ctx.stroke();
+      ctx.fillText('Ống PU chạy dọc gắp phải: L = 650mm (Ø4x2.5mm)', 1035, 645);
+
+      ctx.restore();
+    }
+
+    // Vẽ toàn bộ dây dẫn và hiệu ứng dòng chảy tín hiệu/nhớt
+    function drawWires() {
+      WIRES.forEach(w => {
+        if (!layers[w.layer]) return;
+        const netObj = NET_DATABASE[w.net];
+        const isSelected = (selectedNet === w.net);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(w.pts[0][0], w.pts[0][1]);
+        for (let i = 1; i < w.pts.length; i++) {
+          ctx.lineTo(w.pts[i][0], w.pts[i][1]);
+        }
+
+        if (w.layer === 'fluid') {
+          // Ống dẫn nhớt PU vẽ 2 lớp (Vỏ ống + Lõi nhớt)
+          ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(56, 189, 248, 0.55)';
+          ctx.lineWidth = isSelected ? 9 : 7;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.stroke();
+
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 3.5;
+          ctx.setLineDash([10, 6]);
+          ctx.lineDashOffset = simRunning ? -pulseTick * 0.8 : 0;
+          ctx.stroke();
+        } else {
+          // Dây điện & tín hiệu
+          if (isSelected) {
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+            ctx.lineWidth = 8;
+            ctx.stroke();
+          }
+          ctx.strokeStyle = netObj ? netObj.color : '#38bdf8';
+          ctx.lineWidth = isSelected ? 3.5 : (w.layer === 'power' ? 2.6 : 2.0);
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.stroke();
+
+          // Xung chạy dọc dây khi mô phỏng mạch đang hoạt động
+          if (simRunning && (w.net === 'NET_GPIO14_PUMP' || w.net === 'NET_PUMP_12V' || w.net === 'NET_I2C_SDA')) {
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 28]);
+            ctx.lineDashOffset = -pulseTick * 1.4;
+            ctx.stroke();
+          }
+        }
+
+        // Vẽ mối hàn (Junction Node) tại điểm đầu và cuối
+        [w.pts[0], w.pts[w.pts.length - 1]].forEach(pt => {
+          ctx.beginPath();
+          ctx.arc(pt[0], pt[1], 3.8, 0, Math.PI * 2);
+          ctx.fillStyle = netObj ? netObj.color : '#fff';
+          ctx.fill();
+        });
+
+        ctx.restore();
+      });
+    }
+
+    // Vẽ các khối linh kiện điện tử & chân tiếp xúc (IC Packages)
+    function drawBlocks() {
+      BLOCKS.forEach(b => {
+        const isSelected = (selectedNet === b.net);
+        ctx.save();
+
+        // Đổ bóng khối CAD
+        ctx.fillStyle = 'rgba(11, 18, 32, 0.95)';
+        ctx.strokeStyle = isSelected ? '#ffffff' : '#38bdf8';
+        ctx.lineWidth = isSelected ? 2.6 : 1.8;
+        ctx.beginPath();
+        ctx.roundRect(b.x, b.y, b.w, b.h, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        // Thanh tiêu đề linh kiện
+        ctx.fillStyle = 'rgba(14, 165, 233, 0.18)';
+        ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, 36);
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(b.title, b.x + 10, b.y + 16);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '9.5px monospace';
+        ctx.fillText(b.sub, b.x + 10, b.y + 31);
+
+        // Vẽ họa tiết đặc trưng bên trong từng linh kiện
+        if (b.id === 'MCU_ESP8266') {
+          // Vẽ chip Wi-Fi ESP-12E và ăng-ten PCB
+          ctx.strokeStyle = '#475569';
+          ctx.strokeRect(b.x + 62, b.y + 58, 76, 95);
+          ctx.fillStyle = '#22d3ee';
+          ctx.font = 'bold 9.5px monospace';
+          ctx.fillText('ESP-12E', b.x + 76, b.y + 105);
+          ctx.fillStyle = simRunning ? '#10b981' : '#ef4444';
+          ctx.fillText(simRunning ? 'STATUS: RUN' : 'STATUS: LOCK', b.x + 66, b.y + 125);
+        } else if (b.id === 'PUMP_G168') {
+          // Vẽ 3 con lăn bơm nhu động xoay
+          const cx = b.x + 75, cy = b.y + 115;
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 34, 0, Math.PI * 2);
+          ctx.stroke();
+          for (let i = 0; i < 3; i++) {
+            const ang = (simRunning ? pulseTick * 0.06 : 0) + (i * Math.PI * 2) / 3;
+            const rx = cx + Math.cos(ang) * 20;
+            const ry = cy + Math.sin(ang) * 20;
+            ctx.fillStyle = '#38bdf8';
+            ctx.beginPath();
+            ctx.arc(rx, ry, 7, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else if (b.id === 'SENS_REED') {
+          // Vẽ trạng thái tiếp điểm công tắc từ chân chống
+          ctx.fillStyle = simRunning ? '#10b981' : '#ef4444';
+          ctx.font = 'bold 10px monospace';
+          ctx.fillText(
+            simRunning ? 'CHỐNG GẠT LÊN -> HỞ (HIGH)' : 'HẠ CHỐNG -> NỐI GND (LOW)',
+            b.x + 12, b.y + 68
+          );
+        }
+
+        // Vẽ từng chân tiếp xúc (Contact Pins)
+        b.pins.forEach(p => {
+          ctx.fillStyle = p.col;
+          ctx.strokeStyle = '#060a12';
+          ctx.lineWidth = 1.2;
+
+          // Pad đồng tiếp xúc
+          ctx.beginPath();
+          ctx.rect(p.x - 5, p.y - 5, 10, 10);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = '#f8fafc';
+          ctx.font = 'bold 9.5px monospace';
+          if (p.side === 'left') {
+            ctx.textAlign = 'left';
+            ctx.fillText(p.label, p.x + 9, p.y + 3);
+          } else {
+            ctx.textAlign = 'right';
+            ctx.fillText(p.label, p.x - 9, p.y + 3);
+          }
+        });
+
+        ctx.restore();
+      });
+    }
+
+    function render() {
+      pulseTick++;
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+      drawGrid();
+
+      ctx.save();
+      ctx.translate(window.innerWidth / 2, window.innerHeight / 2);
+      ctx.scale(zoom, zoom);
+      ctx.translate(-camX, -camY);
+
+      drawDrawingBorder();
+      drawPinoutTableAndDims();
+      drawFluidSystem();
+      drawWires();
+      drawDiscreteSymbols();
+      drawBlocks();
+
+      ctx.restore();
+      requestAnimationFrame(render);
+    }
+    render();
+
+    // Bắt sự kiện chọn nhánh dây hoặc linh kiện trên bản vẽ CAD
+    function pickElementAt(wx, wy) {
+      // Kiểm tra chạm vào khối linh kiện
+      for (const b of BLOCKS) {
+        if (wx >= b.x && wx <= b.x + b.w && wy >= b.y && wy <= b.y + b.h) {
+          selectNet(b.net);
+          return;
+        }
+      }
+      // Kiểm tra khoảng cách tới các đoạn dây
+      for (const w of WIRES) {
+        if (!layers[w.layer]) continue;
+        for (let i = 0; i < w.pts.length - 1; i++) {
+          const ax = w.pts[i][0], ay = w.pts[i][1];
+          const bx = w.pts[i + 1][0], by = w.pts[i + 1][1];
+          const dist = distToSegment(wx, wy, ax, ay, bx, by);
+          if (dist < 14) {
+            selectNet(w.net);
+            return;
+          }
+        }
+      }
+      selectedNet = null;
+    }
+
+    function distToSegment(px, py, x1, y1, x2, y2) {
+      const l2 = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+      if (l2 === 0) return Math.hypot(px - x1, py - y1);
+      let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+      t = Math.max(0, Math.min(1, t));
+      return Math.hypot(px - (x1 + t * (x2 - x1)), py - (y1 + t * (y2 - y1)));
+    }
+
+    function selectNet(netKey) {
+      selectedNet = netKey;
+      const info = NET_DATABASE[netKey];
+      if (info) {
+        const badge = document.getElementById('netName');
+        badge.textContent = info.name;
+        badge.style.background = info.color;
+        document.getElementById('netDesc').textContent = info.spec;
+      }
+    }
+
+    // Tương tác Pan & Zoom chuẩn phần mềm CAD
+    let pointerDownPos = { x: 0, y: 0 };
+    canvas.addEventListener('pointerdown', (e) => {
+      isPanning = true;
+      startPanX = e.clientX;
+      startPanY = e.clientY;
+      pointerDownPos = { x: e.clientX, y: e.clientY };
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      mouseCAD = screenToWorld(e.clientX, e.clientY);
+      document.getElementById('coordDisplay').textContent =
+        `X: ${mouseCAD.x.toFixed(1)} | Y: ${mouseCAD.y.toFixed(1)} mm • Zoom: ${Math.round(zoom * 100)}%`;
+
+      if (!isPanning) return;
+      camX -= (e.clientX - startPanX) / zoom;
+      camY -= (e.clientY - startPanY) / zoom;
+      startPanX = e.clientX;
+      startPanY = e.clientY;
+    });
+
+    window.addEventListener('pointerup', (e) => {
+      if (isPanning && Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y) < 6) {
+        const pt = screenToWorld(e.clientX, e.clientY);
+        pickElementAt(pt.x, pt.y);
+      }
+      isPanning = false;
+    });
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const before = screenToWorld(e.clientX, e.clientY);
+      const factor = e.deltaY < 0 ? 1.12 : 0.89;
+      zoom = Math.max(0.2, Math.min(3.5, zoom * factor));
+      const after = screenToWorld(e.clientX, e.clientY);
+      camX += before.x - after.x;
+      camY += before.y - after.y;
+    }, { passive: false });
+
+    // Sự kiện các nút điều khiển Layer & Mô phỏng
+    document.getElementById('btnFit').onclick = fitAll;
+
+    const btnSim = document.getElementById('btnSim');
+    btnSim.onclick = () => {
+      simRunning = !simRunning;
+      btnSim.textContent = simRunning ? '⚡ Test Mạch: CHẠY' : '🛑 Test Mạch: HẠ CHỐNG (NGẮT)';
+      btnSim.classList.toggle('active', !simRunning);
+    };
+
+    document.querySelectorAll('#layerBar [data-layer]').forEach(btn => {
+      btn.onclick = () => {
+        const k = btn.getAttribute('data-layer');
+        layers[k] = !layers[k];
+        btn.classList.toggle('active', layers[k]);
+      };
+    });
+
+    // =========================================================================
+    // TRÌNH XUẤT FILE AUTOCAD (.DXF) & VECTOR (.SVG) TRỰC TIẾP TRÊN TRÌNH DUYỆT
+    // =========================================================================
+    document.getElementById('btnExportDXF').onclick = () => {
+      let dxf = "0\nSECTION\n2\nENTITIES\n";
+      const addLine = (x1, y1, x2, y2, layer) => {
+        dxf += `0\nLINE\n8\n${layer}\n10\n${x1}\n20\n${-y1}\n11\n${x2}\n21\n${-y2}\n`;
+      };
+      const addRect = (x, y, w, h, layer) => {
+        addLine(x, y, x + w, y, layer);
+        addLine(x + w, y, x + w, y + h, layer);
+        addLine(x + w, y + h, x, y + h, layer);
+        addLine(x, y + h, x, y, layer);
+      };
+      const addText = (x, y, h, txt, layer) => {
+        dxf += `0\nTEXT\n8\n${layer}\n10\n${x}\n20\n${-y}\n40\n${h}\n1\n${txt}\n`;
+      };
+
+      addRect(20, 20, CAD_W - 40, CAD_H - 40, "BORDER");
+      BLOCKS.forEach(b => {
+        addRect(b.x, b.y, b.w, b.h, "COMPONENTS");
+        addText(b.x + 8, b.y + 18, 9, b.title, "TEXT");
+        b.pins.forEach(p => {
+          addRect(p.x - 4, p.y - 4, 8, 8, "PINS");
+          addText(p.x + (p.side === 'left' ? 8 : -65), p.y + 3, 7, p.label, "PINS");
+        });
+      });
+      WIRES.forEach(w => {
+        for (let i = 0; i < w.pts.length - 1; i++) {
+          addLine(w.pts[i][0], w.pts[i][1], w.pts[i + 1][0], w.pts[i + 1][1], w.net);
+        }
+      });
+      dxf += "0\nENDSEC\n0\nEOF\n";
+
+      const blob = new Blob([dxf], { type: 'application/dxf' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'So_Do_CAD_2D_Tra_Nhot_ESP8266.dxf';
+      a.click();
+    };
+
+    document.getElementById('btnExportSVG').onclick = () => {
+      let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CAD_W} ${CAD_H}" width="100%" height="100%" style="background:#060a12;font-family:monospace">`;
+      svg += `<rect x="20" y="20" width="${CAD_W - 40}" height="${CAD_H - 40}" fill="none" stroke="#38bdf8" stroke-width="2"/>`;
+      WIRES.forEach(w => {
+        const col = NET_DATABASE[w.net]?.color || '#38bdf8';
+        const pts = w.pts.map(p => p.join(',')).join(' ');
+        svg += `<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="${w.layer === 'fluid' ? 5 : 2.5}"/>`;
+      });
+      BLOCKS.forEach(b => {
+        svg += `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="6" fill="#0b1220" stroke="#38bdf8" stroke-width="2"/>`;
+        svg += `<text x="${b.x + 10}" y="${b.y + 18}" fill="#38bdf8" font-size="11" font-weight="bold">${b.title}</text>`;
+        svg += `<text x="${b.x + 10}" y="${b.y + 32}" fill="#94a3b8" font-size="9.5">${b.sub}</text>`;
+        b.pins.forEach(p => {
+          svg += `<rect x="${p.x - 4}" y="${p.y - 4}" width="8" height="8" fill="${p.col}"/>`;
+          const tx = p.side === 'left' ? p.x + 8 : p.x - 8;
+          const anchor = p.side === 'left' ? 'start' : 'end';
+          svg += `<text x="${tx}" y="${p.y + 3}" fill="#f8fafc" font-size="9" text-anchor="${anchor}">${p.label}</text>`;
+        });
+      });
+      svg += `</svg>`;
+
+      const blob = new Blob([svg], { type: 'image/svg+xml' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'So_Do_CAD_2D_Tra_Nhot_ESP8266.svg';
+      a.click();
+    };
+  </script>
+</body>
+</html>
